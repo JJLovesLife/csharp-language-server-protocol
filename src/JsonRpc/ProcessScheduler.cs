@@ -35,11 +35,15 @@ namespace OmniSharp.Extensions.JsonRpc
                     var observableQueue =
                         new BehaviorSubject<(RequestProcessType type, ReplaySubject<IObservable<Unit>> observer, Subject<Unit>? contentModifiedSource)>(
                             ( RequestProcessType.Serial, new ReplaySubject<IObservable<Unit>>(int.MaxValue, Scheduler.Immediate), supportContentModified ? new Subject<Unit>() : null )
+                            // 为什么用 ReplaySubject？看下来我感觉是因为下面 Select 之后使用了 Concat，这个会导致 `.Subscribe(_ => { })` 不会立刻 consume 当前 observableQueue.Value.observer 中的内容。
+                            // 它需要等到下一个 observableQueue.(Old)Value.observer的内容 consume 之后才会开始 observe 这个 observer。这里应该是存在并发（尚未验证）导致 .Value.observer不会同步立刻被consume。
+                            // 所以它需要使用 ReplaySubject 来记住 concat 还没有切换到最新值的时候的所有 next value，然后当 concat 切换到下一个 .Value.observer 的时候把之前所有记录下来的 value 全部一次性发过去。
+                            // 不用 ReplaySubject 的话，之前的那些 value 会因为没有 observer 监听而被直接丢弃掉。
                         );
 
                     cd.Add(
                         subject.Subscribe(
-                            item => {
+                            item => { // [InputHandler sync]
                                 if (observableQueue.Value.type != item.type)
                                 {
                                     logger.LogDebug("Swapping from {From} to {To}", observableQueue.Value.type, item.type);
@@ -86,7 +90,7 @@ namespace OmniSharp.Extensions.JsonRpc
                                 }
                             )
                            .Concat()
-                           .Subscribe(observer)
+                           .Subscribe(observer) // observableQueue 是 BehaviorSubject 这里会触发一次 OnNext
                     );
 
                     return cd;
@@ -96,10 +100,10 @@ namespace OmniSharp.Extensions.JsonRpc
             _disposable.Add(
                 obs
                    .ObserveOn(scheduler)
-                   .Subscribe(_ => { })
+                   .Subscribe(_ => { }) // 会触发 obs Create传入的lambada
             );
 
-            IObservable<Unit> HandleRequest(string name, IObservable<Unit> request)
+            IObservable<Unit> HandleRequest(string name, IObservable<Unit> request) // [InputHandler sync]
             {
                 return request
                       .Catch<Unit, RequestCancelledException>(

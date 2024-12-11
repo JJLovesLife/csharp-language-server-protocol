@@ -74,13 +74,13 @@ namespace OmniSharp.Extensions.JsonRpc
             RequestInvocationHandle handle)
         {
             var cts = handle.CancellationTokenSource;
-            return (contentModifiedToken, scheduler) =>
+            return (contentModifiedToken, scheduler /* options.InputScheduler */) => // [InputHandler sync]
                 Observable.Create<ErrorResponse>(
                                observer => {
                                    // ITS A RACE!
                                    var sub = Observable.Amb(
                                                             contentModifiedToken.Select(
-                                                                _ => {
+                                                                _ => { // 这个比较疑惑，理论上一个 message 会导致很多不相关的内容被 cancel, 而且 spec 说的很清楚 "A server should NOT send this error code if it detects a content change in it unprocessed messages.
                                                                     _logger.LogTrace(
                                                                         "Request {Id} was abandoned due to content be modified", request.Id
                                                                     );
@@ -89,11 +89,15 @@ namespace OmniSharp.Extensions.JsonRpc
                                                                     );
                                                                 }
                                                             ),
-                                                            Observable.Timer(_options.RequestTimeout, scheduler).Select(
+                                                            // on subscripe create a delay Task with ContinueWith runs on [options.InputScheduler]
+                                                            Observable.Timer(_options.RequestTimeout, scheduler).Select( // [options.InputScheduler]
                                                                 _ => new ErrorResponse(new RequestCancelled(request.Id, request.Method))
                                                             ),
                                                             Observable.FromAsync(
-                                                                async ct => {
+                                                                async ct => { // on subscribe this will be called one time without await
+                                                                    // first exec runs on [InputHandler sync]
+                                                                    // 如果没有 run to complete subscribe 会执行 EmitTaskResult
+                                                                    // task runs on which scheduler? 由这个lambda决定，这里没有指定，就是当前环境，也就是没有指定
                                                                     using var timer = _logger.TimeDebug(
                                                                         "Processing request {Method} {ResponseId}", request.Method,
                                                                         request.Id
@@ -136,7 +140,7 @@ namespace OmniSharp.Extensions.JsonRpc
                                                                 }
                                                             )
                                                         )
-                                                       .Subscribe(observer);
+                                                       .Subscribe(observer); // subscripbe on three sequentially [InputHandler sync]
                                    return new CompositeDisposable(sub, handle);
                                }
                            )

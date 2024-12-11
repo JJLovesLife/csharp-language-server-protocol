@@ -37,7 +37,12 @@ namespace OmniSharp.Extensions.LanguageServer.Shared
 
     internal class SupportedCapabilitiesBase
     {
+        // 1. [ICapability] initializeRequest.Capabilities.SelectToken(CapabilityKeyAttribute.Keys).ToObject<> (不属于 _clientCapabilities)
+        // 2. [ISupports] _clientCapabilities.SelectToken() (属于 _clientCapabilities)
+        // 在specification中两者似乎没有区别
         private readonly IDictionary<Type, object> _supports = new Dictionary<Type, object>();
+
+        private ClientCapabilities _clientCapabilities = null!; // initializeRequest.Capabilities.ToObject<>
 
         public void Initialize(ClientCapabilities clientCapabilities)
         {
@@ -138,8 +143,6 @@ namespace OmniSharp.Extensions.LanguageServer.Shared
         private static readonly MethodInfo GetRegistrationOptionsInnerMethod = typeof(SupportedCapabilitiesBase)
                                                                               .GetTypeInfo()
                                                                               .GetMethod(nameof(GetRegistrationOptionsInner), BindingFlags.NonPublic | BindingFlags.Static)!;
-
-        private ClientCapabilities _clientCapabilities = null!;
 
         private static object GetRegistrationOptionsInner<TR>(IRegistration<TR> capability, ClientCapabilities clientCapabilities) where TR : class
         {
